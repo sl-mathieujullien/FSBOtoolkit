@@ -13,8 +13,11 @@
 // ==/UserScript==
 
 let CONFIG = null
-const VERSION = "crossbill2"
+const VERSION = "Yellowhammer"
 const TITLE = "FSBO toolkit"
+
+const SLACK =
+  "https://kugawana.slack.com/archives/C04538Q5PN0/p1698954491669619?thread_ts=1698926655.268359&cid=C04538Q5PN0"
 
 const FORM_DATA = {
   apartment: {
@@ -219,6 +222,14 @@ const styles = () =>
         opacity: 0.2;
       }
 
+      .m_container a {
+        text-decoration: none;
+      }
+
+      .m_container a:hover {
+        text-decoration: underline;
+      }
+
       .m_container .m_version {
         top: 5px;
         right: 5px;
@@ -236,6 +247,37 @@ const styles = () =>
       }
   
       .m_container:hover ul {
+        display: block;
+      }
+
+      .m_container .m_log {
+        display: none;
+        padding: 5px;
+      }
+
+      .m_container:hover .m_rq {
+        display: block;
+      }
+  
+      .m_container .m_rq {
+        display: none;
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        width: 200px;
+        background-color: white;
+        border: solid 1px #000000;
+        font-size: 12px;
+        line-height: 14px;
+        padding: 2px;
+        margin: 0;
+      }
+
+      .m_container .m_rq a {
+        font-weight: bold;
+      }
+
+      .m_container:hover .m_log {
         display: block;
       }
   
@@ -394,20 +436,38 @@ const UI = {
       <button class="m_add">add</button>
     </li>
   `,
-  header: () => `
+  header: async () => {
+    const config = (await GM.getValue("config", 0)) || {}
+
+    return `
     <h3 class="m_logo">
         FSBO
     </h3>
     
     <h3 class="m_title">
         <div class="m_anim">${TITLE}</div>
-    </h3>`,
+    </h3>
+    
+    ${
+      config.version !== VERSION
+        ? `<p class="m_rq">
+          For optimal use please update the 
+          <a href="${SLACK}" target="_blank">
+            config
+          </a>
+        </p>`
+        : ""
+    }`
+  },
+  footer: () => `
+    <div class="m_log"></div>
+  `,
   infos: (fsboDebug) => {
     const config = CONFIG ? JSON.stringify(CONFIG).replace(/\n\t /gi, "") : ""
 
     return `
     <div class="m_info">
-      <div class="m_version">[${VERSION}]</div>
+      <div class="m_version">[<a href="https://en.wikipedia.org/wiki/${VERSION}" target="_blank">${VERSION}</a>]</div>
       <p>
         <span>Config</span>
         <input value='${config}' id="m_config"/>
@@ -486,24 +546,31 @@ const request = ({ url, method, data, apiKey, token }) => {
     },
     ...(data ? { body: JSON.stringify(data) } : {}),
   }).then((response) => {
-    return response.status === 200 ? response.json() : null
+    if (response.status === 200) return response.json()
+    if (response.status === 204) return null
+    throw new Error(`${url} (${response.status})`)
   })
+}
+
+const getUrl = (url) => {
+  return getHost() === "local" ? `${CONFIG.local}${url}` : url
 }
 
 const requestUserData = async ({ email, password }) => {
   const data = await request({
-    url: getHost() === "local" ? CONFIG.userDataLocal : CONFIG.userDataAll,
+    url: getUrl(CONFIG.userDataAll),
     method: "POST",
     data: { siteId: 1, email: email, password: password },
   })
   return { userId: data.user.id, token: data.token }
 }
 
-const createUI = ({ accounts, fsboDebug }) => {
+const createUI = async ({ accounts, fsboDebug }) => {
   const html = `
-    ${UI.header()}
+    ${await UI.header()}
     ${UI.infos(fsboDebug)}
     ${UI.listUser(accounts, UI.formAddUser())}
+    ${UI.footer()}
   `
 
   return html
@@ -543,37 +610,36 @@ const getAccount = (id, accounts) => {
   return search.length === 1 ? search[0] : null
 }
 
-const connected = async (account, accounts) => {
+const connected = async (account, accounts, cb) => {
   const data = await requestUserData(account)
+
   let dataWith2FAToken = {}
 
   if (getHost() !== "prod") {
     //2FA
-    try {
-      await request({
-        token: data.token,
-        url: CONFIG.sendMfaCode,
-        method: "GET",
-      })
+    cb("connexion step 1/4")
+    await request({
+      token: data.token,
+      url: getUrl(CONFIG.sendMfaCode),
+      method: "GET",
+    })
+    cb("connexion step 2/4")
 
-      const { code } = await request({
-        url: `${CONFIG.getMfaCode}${data.userId}`,
-        method: "GET",
-        apiKey: CONFIG.getMfaCodeApiKey,
-      })
+    const { code } = await request({
+      url: `${CONFIG.getMfaCode}${data.userId}`,
+      method: "GET",
+      apiKey: CONFIG.getMfaCodeApiKey,
+    })
+    cb("connexion step 3/4")
 
-      dataWith2FAToken = await request({
-        token: data.token,
-        url: CONFIG.validateMfaCode,
-        method: "POST",
-        data: {
-          code,
-        },
-      })
-      log("2FA connexion success")
-    } catch (e) {
-      log("2FA connexion error")
-    }
+    dataWith2FAToken = await request({
+      token: data.token,
+      url: getUrl(CONFIG.validateMfaCode),
+      method: "POST",
+      data: {
+        code,
+      },
+    })
   }
 
   setUserData({ ...data, token: dataWith2FAToken.token ?? data.token })
@@ -604,11 +670,7 @@ const getToken = () => {
 }
 
 const isConnected = () => {
-  if (CONFIG?.keyToken) {
-    const token = localStorage.getItem(CONFIG.keyToken)
-    return token !== "isDisconnected" || !token
-  }
-  return false
+  return ((CONFIG?.keyToken && localStorage.getItem(CONFIG.keyToken)) || "").length > 100
 }
 
 const getFsboDebug = () => {
@@ -651,10 +713,9 @@ const refreshAccounts = async () => {
   }))
 }
 
-const refreshUI = ({ accounts, fsboDebug }) => {
-  log("refreshUI")
+const refreshUI = async ({ accounts, fsboDebug }) => {
   const container = document.body.querySelector(".m_container")
-  container.innerHTML = createUI({ accounts, fsboDebug })
+  container.innerHTML = await createUI({ accounts, fsboDebug })
 }
 
 const setFunnelData = (type) => {
@@ -691,20 +752,25 @@ const error = (target) => {
   message(target, "error!")
 }
 
-const goURL = async (target, type) => {
+const goURL = async (container, target, type) => {
   try {
     if (type === "list") {
-      if (getHost() === "local") window.open(CONFIG.myListingsLocal, "_blank")
-      else document.location.replace(CONFIG.myListingsAll)
+      const url = getUrl(CONFIG.myListingsAll)
+      if (getHost() === "local") window.open(url, "_blank")
+      else document.location.replace(url)
     } else if (type === "form") {
       document.location.replace(CONFIG.addListings)
     } else if (isConnected()) {
       const token = getToken()
       const listings = await request({
-        url: getHost() === "local" ? CONFIG.getListingsLocal : CONFIG.getListingsAll,
+        url: getUrl(CONFIG.getListingsAll),
         method: "GET",
         token,
-      }).then((data) => data.listings || [])
+      })
+        .then((data) => data.listings || [])
+        .catch((e) => {
+          throw e
+        })
 
       const filterListings = listings
         .sort((a, b) => b.listingId - a.listingId)
@@ -720,14 +786,14 @@ const goURL = async (target, type) => {
     }
   } catch (e) {
     error(target)
-    log("Error redirection")
+    log(container, "Error redirection")
   }
 }
 
 const addListingId = async () => {
   const token = getToken()
   const listings = await request({
-    url: getHost() === "local" ? CONFIG.getListingsLocal : CONFIG.getListingsAll,
+    url: getUrl(CONFIG.getListingsAll),
     method: "GET",
     token,
   }).then((data) => data.listings || [])
@@ -754,8 +820,8 @@ const addListingId = async () => {
     .filter((item) => !!item)
 }
 
-const log = (text) => {
-  console.log(`${TITLE} : ${text}`)
+const log = (container, text) => {
+  container.querySelector(".m_log").innerHTML = text
 }
 ;(async function () {
   "use strict"
@@ -770,6 +836,7 @@ const log = (text) => {
         CONFIG = JSON.parse(container.querySelector("#m_config").value)
         await GM.setValue("config", CONFIG)
         done(target)
+        refreshUI({ accounts, fsboDebug })
       } catch (e) {
         error(target)
       }
@@ -812,8 +879,8 @@ const log = (text) => {
     addUser: async (target, container) => {
       try {
         accounts = await addUser({
-          email: container.querySelector("#m_email").value,
-          password: container.querySelector("#m_password").value,
+          email: container.querySelector("#m_email").value.trim(),
+          password: container.querySelector("#m_password").value.trim(),
           isProd: container.querySelector("#m_is_prod").value === "prod",
         })
         refreshUI({ accounts, fsboDebug })
@@ -821,23 +888,37 @@ const log = (text) => {
         error(target)
       }
     },
-    connexion: async (target, id) => {
+    connexion: async (target, container, id) => {
       const account = getAccount(id, accounts)
 
       if (account) {
-        if (isConnected()) accounts = disconnected(accounts)
-        else accounts = await connected(account, accounts)
+        if (isConnected()) {
+          accounts = disconnected(accounts)
+          window.setTimeout(async () => {
+            document.location.reload()
+          }, 200)
+        } else {
+          try {
+            log(container, "connexion...")
+            accounts = await connected(account, accounts, (mess) => {
+              log(container, mess)
+            })
+            log(container, `Connecté!`)
 
-        window.setTimeout(async () => {
-          document.location.reload()
-        }, 200)
+            window.setTimeout(async () => {
+              document.location.reload()
+            }, 200)
+          } catch (e) {
+            log(container, `Connexion Error : ${e.message}`)
+          }
+        }
       } else {
         error(target)
       }
     },
     goURL: async (target) => {
       const type = target.dataset?.id
-      await goURL(target, type)
+      await goURL(container, target, type)
     },
     addListingId: async (target) => {
       const elts = await addListingId()
@@ -861,7 +942,7 @@ const log = (text) => {
     if (target.className === "m_update_config") actions.updateConfig(target, container)
     else if (target.id === "m_config") return
     else if (!CONFIG) alert("please add configuration")
-    else if (target.className === "m_connexion" && id) actions.connexion(target, id)
+    else if (target.className === "m_connexion" && id) actions.connexion(target, container, id)
     else if (target.className === "m_add") actions.addUser(target, container)
     else if (target.className === "m_debug") actions.setFSBODebug()
     else if (target.className === "m_clear") actions.sessionClear(target)
