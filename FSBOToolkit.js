@@ -1,5 +1,5 @@
 let CONFIG = null
-const VERSION = "Yellowhammer"
+const VERSION = "Goldcrest"
 const TITLE = "FSBO toolkit"
 
 const SLACK =
@@ -324,6 +324,11 @@ const styles = () =>
         width: 75px;
         text-align: center;
       }
+
+      .m_container .m_info p>button.m_small {
+        width: 22px;
+        font-size: 11px;
+      }
   
       .m_container .m_info p>button:nth-child(2),
       .m_container .m_info p>input:nth-child(2) {
@@ -480,10 +485,32 @@ const UI = {
         <button class="m_auto_form" data-id="parking">parking</button>
       </p>
       <p>
-        <span>Links</span>
-        <button class="m_links" data-id="form">add listing</button>
-        <button class="m_links" data-id="list">my listings</button>
-        <button class="m_links" data-id="edit">edit listing</button>
+        <span>FSBO</span>
+        <button class="m_links" data-id="formFSBO">add</button>
+        <button class="m_links" data-id="list">manage</button>
+        <button class="m_links" data-id="editFSBO">edit</button>
+      </p>
+      <p>
+        <span>FRBO</span>
+        <button class="m_links" data-id="formFRBO">add</button>
+        <button class="m_links" data-id="list">manage</button>
+        <button class="m_links" data-id="editFRBO">edit</button>
+      </p>
+      <p>
+        <span>Server</span>
+        <button class="m_server m_small" data-id="-landlord-rct-1.dignp">S1</button>
+        <button class="m_server m_small" data-id="-landlord-rct-2.dignp">S2</button>
+        <button class="m_server m_small" data-id="-landlord-rct-3.dignp">S3</button>
+        <button class="m_server m_small" data-id="-landlord-rct-4.dignp">S4</button>
+        <button class="m_server m_small" data-id="-landlord-rct-5.dignp">S5</button>
+        
+        <button class="m_server m_small" data-id="-lci-rct-1.dignp">O1</button>
+        <button class="m_server m_small" data-id="-lci-rct-2.dignp">O2</button>
+        <button class="m_server m_small" data-id="-lci-rct-3.dignp">O3</button>
+        <button class="m_server m_small" data-id="-lci-rct-4.dignp">O4</button>
+        <button class="m_server m_small" data-id="-lci-rct-5.dignp">O5</button>
+        <button class="m_server" data-id="-preprod-1.dignp">preprod</button>
+        <button class="m_server" data-id="">prod</button>
       </p>
     </div>`
   },
@@ -738,14 +765,25 @@ const error = (target) => {
   message(target, "error!")
 }
 
+const changeURL = (url) => {
+  const newLocation = document.location.href.replace(
+    /(https\:\/\/)([www\.]*)(seloger).*(\.com)/,
+    `$1$3${url}$4`
+  )
+  document.location.replace(newLocation)
+}
+
 const goURL = async (container, target, type) => {
+  console.log(container, target, type)
   try {
     if (type === "list") {
       const url = getUrl(CONFIG.myListingsAll)
       if (getHost() === "local") window.open(url, "_blank")
       else document.location.replace(url)
-    } else if (type === "form") {
-      document.location.replace(CONFIG.addListings)
+    } else if (type === "formFSBO") {
+      document.location.replace(CONFIG.addListingsFSBO)
+    } else if (type === "formFRBO") {
+      document.location.replace(CONFIG.addListingsFRBO)
     } else if (isConnected()) {
       const token = getToken()
       const listings = await request({
@@ -765,7 +803,9 @@ const goURL = async (container, target, type) => {
       if (filterListings && filterListings[0] && filterListings[0].listingId) {
         const id = filterListings[0].listingId
 
-        document.location.replace(`${CONFIG.editListing}=${id}`)
+        document.location.replace(
+          `${type === "editFRBO" ? CONFIG.editListingFRBO : CONFIG.editListingFSBO}=${id}`
+        )
       } else {
         error(target)
       }
@@ -906,6 +946,10 @@ const log = (container, text) => {
       const type = target.dataset?.id
       await goURL(container, target, type)
     },
+    changeURL: (target) => {
+      const url = target.dataset?.id
+      changeURL(url)
+    },
     addListingId: async (target) => {
       const elts = await addListingId()
       if (elts.length > 0) {
@@ -934,6 +978,7 @@ const log = (container, text) => {
     else if (target.className === "m_clear") actions.sessionClear(target)
     else if (target.className === "m_auto_form") actions.autoFillFSBOForm(target)
     else if (target.className === "m_links") actions.goURL(target)
+    else if (target.className.includes("m_server")) actions.changeURL(target)
     else if (target.className === "m_add_listing_id") actions.addListingId(target)
     else if (target.className === "m_delete" && id) actions.deleteUser(id)
     else if (target.className === "m_copy" && id) actions.copyAccount(target, id)
